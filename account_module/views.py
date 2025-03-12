@@ -48,6 +48,10 @@ class LoginView(APIView):
         
 
 class DoctorProfileAPIView(APIView):
+    def get(self, request):
+        doctors = Doctor.objects.all()
+        serializer = DoctorSerializer(doctors, many=True)
+        return Response(serializer.data)
     def post(self, request):
         try:
             auth_header = request.headers.get('Authorization')
