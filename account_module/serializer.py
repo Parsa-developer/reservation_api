@@ -1,41 +1,80 @@
 from rest_framework import serializers
-from .models import Patient, Doctor, Bookings 
+from .models import Patient, Doctor, Bookings
+from django.db import transaction
+from django.core.validators import RegexValidator
 
 
 class PatientSerializer(serializers.ModelSerializer):
-    password = serializers.CharField(write_only=True)
-    
     class Meta:
         model = Patient
-        fields = ['id', 'email', 'password']
-        
-    def create(self, validated_data):
-        patient = Patient(email=validated_data['email'], role='patient')
-        patient.set_password(validated_data['password'])
-        patient.save()
-        return patient
+        fields = ['email', 'password']
 
 class DoctorSerializer(serializers.ModelSerializer):
-    password = serializers.CharField(write_only=True)
 
     class Meta:
         model = Doctor
-        fields = ['id', 'email', 'password', 'name', 'specialty', 'available_slots']  
-            
-    def create(self, validated_data):
-        doctor = Doctor(
-            email=validated_data['email'],
-            role='doctor',
-            name=validated_data['name'],
-            specialty=validated_data['specialty']
-        )
+        fields = ['name', 'speciality', 'available_slots']
         
-        doctor.set_password(validated_data['password'])
-        doctor.save()
-        return doctor
-        
+# class BookingsSerializer(serializers.ModelSerializer):
+#     class Meta:
+#         model = Bookings
+#         fields = ['status', 'patient', 'doctor', 'date', 'time_slot']
 
 class BookingsSerializer(serializers.ModelSerializer):
+    time_slot = serializers.CharField(
+        validators=[
+            RegexValidator(
+                regex=r'^([0-1][0-9]|2[0-3]):[0-5][0-9]-([0-1][0-9]|2[0-3]):[0-5][0-9]$',
+                message='Time slot must be in "HH:MM-HH:MM" format (24-hour)'
+            )
+        ]
+    )
+
     class Meta:
         model = Bookings
-        fields = ['id', 'patient', 'doctor', 'booked_slot', 'status']
+        fields = ['id', 'patient', 'doctor', 'date', 'time_slot']
+        read_only_fields = ['patient']
+
+    def validate(self, attrs):
+        # Add any additional validation here
+        return attrs
+
+    def create(self, validated_data):
+        with transaction.atomic():
+            doctor = validated_data['doctor']
+            date_str = validated_data['date'].strftime("%Y-%m-%d")
+            time_slot = validated_data['time_slot']
+
+            # Lock the doctor row during the transaction
+            doctor = Doctor.objects.select_for_update().get(pk=doctor.pk)
+            available_slots = doctor.available_slots.copy()
+
+            # Find the slot entry for the given date
+            slot_entry = next(
+                (entry for entry in available_slots if entry['date'] == date_str),
+                None
+            )
+
+            if not slot_entry:
+                raise serializers.ValidationError("No available slots for this date")
+
+            if time_slot not in slot_entry['slots']:
+                raise serializers.ValidationError("Time slot not available")
+
+            # Remove the booked slot
+            slot_entry['slots'].remove(time_slot)
+
+            # Clean up empty date entries
+            if not slot_entry['slots']:
+                available_slots = [
+                    entry for entry in available_slots
+                    if entry['date'] != date_str
+                ]
+
+            # Update doctor's availability
+            doctor.available_slots = available_slots
+            doctor.save()
+
+            # Create the booking
+            booking = Bookings.objects.create(**validated_data)
+            return booking
