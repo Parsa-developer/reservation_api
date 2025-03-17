@@ -14,11 +14,6 @@ class DoctorSerializer(serializers.ModelSerializer):
     class Meta:
         model = Doctor
         fields = ['name', 'speciality', 'available_slots']
-        
-# class BookingsSerializer(serializers.ModelSerializer):
-#     class Meta:
-#         model = Bookings
-#         fields = ['status', 'patient', 'doctor', 'date', 'time_slot']
 
 class BookingsSerializer(serializers.ModelSerializer):
     time_slot = serializers.CharField(
@@ -36,7 +31,6 @@ class BookingsSerializer(serializers.ModelSerializer):
         read_only_fields = ['patient']
 
     def validate(self, attrs):
-        # Add any additional validation here
         return attrs
 
     def create(self, validated_data):
@@ -45,11 +39,9 @@ class BookingsSerializer(serializers.ModelSerializer):
             date_str = validated_data['date'].strftime("%Y-%m-%d")
             time_slot = validated_data['time_slot']
 
-            # Lock the doctor row during the transaction
             doctor = Doctor.objects.select_for_update().get(pk=doctor.pk)
             available_slots = doctor.available_slots.copy()
 
-            # Find the slot entry for the given date
             slot_entry = next(
                 (entry for entry in available_slots if entry['date'] == date_str),
                 None
@@ -61,20 +53,16 @@ class BookingsSerializer(serializers.ModelSerializer):
             if time_slot not in slot_entry['slots']:
                 raise serializers.ValidationError("Time slot not available")
 
-            # Remove the booked slot
             slot_entry['slots'].remove(time_slot)
 
-            # Clean up empty date entries
             if not slot_entry['slots']:
                 available_slots = [
                     entry for entry in available_slots
                     if entry['date'] != date_str
                 ]
 
-            # Update doctor's availability
             doctor.available_slots = available_slots
             doctor.save()
 
-            # Create the booking
             booking = Bookings.objects.create(**validated_data)
             return booking

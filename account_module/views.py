@@ -179,6 +179,5 @@ class AppointmentBookingView(generics.CreateAPIView):
     serializer_class = BookingsSerializer
 
     def perform_create(self, serializer):
-        # Automatically set the patient to the current user
         patient = Patient.objects.get(id=1)
         serializer.save(patient=patient)
